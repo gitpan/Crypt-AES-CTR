@@ -1,5 +1,10 @@
 Revision history for Crypt-AES-CTR
 
-0.01    Date/time
-        First version, released on an unsuspecting world.
+0.02    31 Aug 2013
+        + Added oo-interface
+	+ Added padding override for base64
+	= Fixed attribution to include url to original site
+
+0.01    29 Aug 2013
+        = First version, released on an unsuspecting world.
 

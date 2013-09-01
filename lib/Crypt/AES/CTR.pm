@@ -1,7 +1,9 @@
-#    This is a port of Chris Veness' AES implementation                                          #
+##################################################################################################
+#    This is an unofficial port of Chris Veness' AES implementation                              #
 #    (c) Chris Veness 2005-2011. Right of free use is                                            #
-#    granted for all commercial or non-commercial use under CC-BY licence. No warranty of any    #
-#    form is offered.  
+#    granted for all commercial or non-commercial use under CC-BY 3.0 licence. No warranty of    #
+#    any form is offered.  More info at http://www.movable-type.co.uk/scripts/aes.html           #
+##################################################################################################
 package Crypt::AES::CTR;
 
 use 5.006;
@@ -13,7 +15,7 @@ use MIME::Base64;
 use Time::HiRes;
 use Math::BigInt;
 
-use vars qw(@ISA @EXPORT_OK $VERSION $sBox $rCon);
+use vars qw(@ISA @EXPORT_OK $VERSION $sBox $rCon $padding);
 
 require Exporter;
 @ISA = qw(Exporter);
@@ -26,13 +28,13 @@ Crypt::AES::CTR - This is a port of Chris Veness' AES implementation.
 
 =head1 VERSION
 
-Version 0.01
+Version 0.02
 
 =cut
 
-$VERSION = '0.01';
+$VERSION = '0.02';
 
-
+$padding="\n";
 
 # sBox is pre-computed multiplicative inverse in GF(2^8) used in subBytes and keyExpansion [§5.1.1]
 $sBox=[
@@ -103,26 +105,27 @@ This module encrypts and decrypts AES strings using CTR and Chris Veness' AES im
 
 
 sub encrypt {
-  my $plaintext=shift;
-  my $password=shift;
-  my $nBits=shift||0;
+  my ($self,$plaintext,$password,$nBits,$keySchedule,$pad);
+
+  if (ref($_[0]) eq 'Crypt::AES::CTR') { #check for oo
+  $self=shift;
+  $plaintext=shift;
+  $password=shift||$self->{password};
+  $nBits=shift||$self->{nbits};
+  $keySchedule=$self->{keyschedule} if ($password eq $self->{password} and $nBits eq $self->{nbits});
+  $pad=$self->{padding};
+  } else {
+  $plaintext=shift;
+  $password=shift;
+  $nBits=shift||0;
+  $pad=$padding;
+  }
+
 
   my $blockSize = 16;  # block size fixed at 16 bytes / 128 bits (Nb=4) for AES
   if (!($nBits==128 or $nBits==192 or $nBits==256)) { return ''; }  # standard allows 128/192/256 bit keys
   $plaintext =  Encode::encode_utf8($plaintext);
-  $password = Encode::encode_utf8($password);
-  
-  # use AES itself to encrypt password to get cipher key (using plain password as source for key 
-  # expansion) - gives us well encrypted key (though hashed key might be preferred for prod'n use)
-  my $nBytes = $nBits/8;  # no bytes in key (16/24/32)
-  my @pwBytes = ('') x $nBytes;
-  for (my $i=0; $i<$nBytes; $i++) {  # use 1st 16/24/32 chars of password for key
-    $pwBytes[$i] = ($i>=length($password)) ? 0:ord(substr($password,$i,1));
-  }
-  
-  my $key = _cipher(\@pwBytes, _keyExpansion(\@pwBytes));  # gives us 16-byte key
-  
-  $key = [ @{$key},splice($key,0, $nBytes-16) ];  # expand key to 16/24/32 bytes long
+  $keySchedule=_key($password,$nBits) if !defined($keySchedule);
 
   # initialise 1st 8 bytes of counter block with nonce (NIST SP800-38A §B.2): [0-1] = millisec, 
   # [2-3] = random, [4-7] = seconds, together giving full sub-millisec uniqueness up to Feb 2106
@@ -141,7 +144,6 @@ sub encrypt {
   for (my $i=0; $i<8; $i++) { $ctrTxt .= chr($counterBlock[$i]); }
 
   # generate key schedule - an expansion of the key into distinct Key Rounds for each round
-  my $keySchedule = _keyExpansion($key,0);
   my $blockCount = ceil(length($plaintext)/$blockSize);
   my @ciphertxt = ('') x $blockCount;  # ciphertext as array of strings
   
@@ -168,11 +170,12 @@ sub encrypt {
  
    }
    my $ciphertext = $ctrTxt . join('',@ciphertxt);
-   $ciphertext = MIME::Base64::encode_base64($ciphertext);  #// encode in base64
+   $ciphertext = MIME::Base64::encode_base64($ciphertext,$pad);  #// encode in base64
   
   
    return $ciphertext;
 }
+
 
 =head2 decrypt($ciphertext, $key, $nbits)
 
@@ -187,27 +190,27 @@ sub encrypt {
 =cut
 
 sub decrypt {
-    my $ciphertext=shift;
-    my $password=shift;
-    my $nBits=shift||0;
+  my ($self,$ciphertext,$password,$nBits,$keySchedule);
+  
+  if (ref($_[0]) eq 'Crypt::AES::CTR') { #check for oo
+  $self=shift;
+  $ciphertext=shift;
+  $password=shift||$self->{password};
+  $nBits=shift||$self->{nbits};
+  $keySchedule=$self->{keyschedule} if ($password eq $self->{password} and $nBits eq $self->{nbits});
+  } else {
+  $ciphertext=shift;
+  $password=shift;
+  $nBits=shift||0;  
+  }
+  
     my $blockSize = 16;  # block size fixed at 16 bytes / 128 bits (Nb=4) for AES
     if (!($nBits==128 || $nBits==192 || $nBits==256)){
 	return '';  # standard allows 128/192/256 bit keys
     }
     $ciphertext = MIME::Base64::decode_base64($ciphertext);
-    $password = Encode::encode_utf8($password);
-
-    # use AES to encrypt password (mirroring encrypt routine)
-    my $nBytes = $nBits/8;  # no bytes in key
-    my @pwBytes = ('') x $nBytes;#array
-    
-    for (my $i=0; $i<$nBytes; $i++){
-	$pwBytes[$i] = ($i>=length($password)) ? 0:ord(substr($password,$i,1));
-    }
-
-    my $key = _cipher(\@pwBytes, _keyExpansion(\@pwBytes));
-    $key = [ @{$key},splice($key,0, $nBytes-16) ];  # expand key to 16/24/32 bytes long
-
+    $keySchedule=_key($password,$nBits) if !defined($keySchedule);
+  
     # recover nonce from 1st element of ciphertext
     my @counterBlock = ();#array
     my $ctrTxt = substr($ciphertext, 0, 8);
@@ -215,11 +218,7 @@ sub decrypt {
 	$counterBlock[$i] = ord(substr($ctrTxt,$i,1));
     }
 
-
-
-    # generate key schedule
-    my $keySchedule = _keyExpansion($key);
-    
+   
     # separate ciphertext into blocks (skipping past initial 8 bytes)
     my $nBlocks = ceil((length($ciphertext)-8) / $blockSize);
     my @ct = ('') x $nBlocks;#array
@@ -258,6 +257,55 @@ sub decrypt {
     return $plaintext;
 }
 
+=head2 aes_padding($padding)
+
+ Override default padding(\n) for base64 encodes
+
+=cut
+
+sub aes_padding { $padding=shift; }
+
+=head1 OO-INTERFACE
+
+=head2 new
+
+  my $crypt = Crypt::AES::CTR->new( key=>$key, nbits=>$nbits , padding => $padding  );
+
+ #Unicode multi-byte character safe
+ 
+ #$key - The password to use to generate a key
+ #$nbits - Number of bits to be used in the key (128, 192, or 256)
+ #$padding - What to use as padding for base64 encodes, default is \n (optional)
+ 
+ #returns blessed reference
+ 
+ $crypt->encrypt($plaintext); # use cached $key and $nbits from new declaration
+ $crypt->encrypt($plaintext, $key, $nbits); #override $key and $nbits
+
+ # see documentation above for encrypt function
+ 
+ $crypt->decrypt($plaintext); # use cached $key and $nbits from new declaration
+ $crypt->decrypt($plaintext, $key, $nbits); #override $key and $nbits
+
+ # see documentation above for decrypt function 
+ 
+=cut
+
+# 00-style interface
+sub new {
+  my $class = shift;
+  my $self = {};
+  my %new = @_;
+  bless($self, ($class||'Crypt::AES::CTR') );
+  $self->{password}=$new{key};
+  $self->{nbits}=$new{nbits}||0;
+    if (!($self->{nbits}==128 || $self->{nbits}==192 || $self->{nbits}==256)){
+	return '';  # standard allows 128/192/256 bit keys
+    }  
+  $self->{padding}=$new{padding}||$padding;
+  $self->{keyschedule}=_key($self->{password},$self->{nbits});
+  return $self;
+}
 
 # Unsigned right shift function, since Perl has neither >>> operator nor unsigned ints
 #
@@ -275,6 +323,30 @@ sub _urs {
 		$xa = ($xa>>$b);               #   use normal right-shift
 	}
 	return $xa;
+}
+
+# Handle key and keyschedule
+sub _key {
+  my $password = shift;
+  my $nBits = shift;
+  $password = Encode::encode_utf8($password);
+  
+  # use AES itself to encrypt password to get cipher key (using plain password as source for key 
+  # expansion) - gives us well encrypted key (though hashed key might be preferred for prod'n use)
+  my $nBytes = $nBits/8;  # no bytes in key (16/24/32)
+  my @pwBytes = ('') x $nBytes;
+  for (my $i=0; $i<$nBytes; $i++) {  # use 1st 16/24/32 chars of password for key
+    $pwBytes[$i] = ($i>=length($password)) ? 0:ord(substr($password,$i,1));
+  }
+  
+  my $key = _cipher(\@pwBytes, _keyExpansion(\@pwBytes));  # gives us 16-byte key
+  
+  $key = [ @{$key},splice($key,0, $nBytes-16) ];  # expand key to 16/24/32 bytes long
+  
+  # generate key schedule - an expansion of the key into distinct Key Rounds for each round
+  my $keySchedule = _keyExpansion($key);
+
+  return $keySchedule;
 }
 
 # AES Cipher function: encrypt 'input' with Rijndael algorithm
@@ -512,12 +584,15 @@ L<http://search.cpan.org/dist/Crypt-AES-CTR/>
 
 =head1 LICENSE AND COPYRIGHT
 
+This is an unofficial port of Chris Veness' AES implementation
 Copyright (C) Chris Veness 2005-2011. Right of free use is granted for all commercial or non-commercial use under CC-BY 3.0 licence. No warranty of any form is offered. 
 
 Released under the
 L<http://creativecommons.org/licenses/by/3.0/>
 Creative Commons Attribution 3.0 Unported License
 
+For more information:
+L<http://www.movable-type.co.uk/scripts/aes.html>
 
 =cut
 
