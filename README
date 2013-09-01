@@ -2,7 +2,7 @@ NAME
     Crypt::AES::CTR - This is a port of Chris Veness' AES implementation.
 
 VERSION
-    Version 0.02
+    Version 0.03
 
 SYNOPSIS
     This module encrypts and decrypts AES strings using CTR and Chris

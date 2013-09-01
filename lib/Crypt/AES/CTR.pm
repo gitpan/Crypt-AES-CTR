@@ -28,11 +28,11 @@ Crypt::AES::CTR - This is a port of Chris Veness' AES implementation.
 
 =head1 VERSION
 
-Version 0.02
+Version 0.03
 
 =cut
 
-$VERSION = '0.02';
+$VERSION = '0.03';
 
 $padding="\n";
 
@@ -341,7 +341,8 @@ sub _key {
   
   my $key = _cipher(\@pwBytes, _keyExpansion(\@pwBytes));  # gives us 16-byte key
   
-  $key = [ @{$key},splice($key,0, $nBytes-16) ];  # expand key to 16/24/32 bytes long
+  #$key = [ @{$key},splice($key,0, $nBytes-16) ];  # expand key to 16/24/32 bytes long
+  $key = [ @{$key}, map{ $key->[$_] } (0..($nBytes-16-1)) ]; # expand key to 16/24/32 bytes long
   
   # generate key schedule - an expansion of the key into distinct Key Rounds for each round
   my $keySchedule = _keyExpansion($key);
